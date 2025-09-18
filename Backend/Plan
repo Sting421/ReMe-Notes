@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 Set up your Spring Boot project. Use Maven or Gradle for dependency management. Add starters for Web, Security, Data JPA, and PostgreSQL driver. Include JWT library like jjwt.
 Configure your application properties. Set database URL, username, and password for PostgreSQL. Enable Hibernate to create tables automatically during development.
 Design your entities. Create User class with fields: id (Long, auto-generated), username (String, unique), email (String, unique), password (String, hashed). Create Note class with fields: id (Long, auto-generated), title (String), content (String), user (ManyToOne reference to User), createdAt (LocalDateTime).
@@ -8,15 +7,4 @@ Develop controllers. AuthController: POST /api/auth/register takes UserDTO, call
 Add security configuration. Extend WebSecurityConfigurerAdapter. Set up JWT authentication filter. Configure CORS if needed. Disable CSRF for API. Use BCryptPasswordEncoder bean.
 Handle exceptions globally. Create @ControllerAdvice class. Catch specific errors like AuthenticationException, return JSON with status and message.
 Test your backend. Write unit tests for services using JUnit and Mockito. Integration tests for controllers with MockMvc. Use Postman to verify endpoints.
-=======
-Set up your Spring Boot project. Use Maven or Gradle for dependency management. Add starters for Web, Security, Data JPA, and PostgreSQL driver. Include JWT library like jjwt.
-Configure your application properties. Set database URL, username, and password for PostgreSQL. Enable Hibernate to create tables automatically during development.
-Design your entities. Create User class with fields: id (Long, auto-generated), username (String, unique), email (String, unique), password (String, hashed). Create Note class with fields: id (Long, auto-generated), title (String), content (String), user (ManyToOne reference to User), createdAt (LocalDateTime).
-Build repositories. Extend JpaRepository for UserRepository and NoteRepository. Add custom queries if needed, like findByUsername for users.
-Implement services. For authentication: UserService handles registration (hash password with BCrypt) and login (verify credentials, generate JWT). For notes: NoteService manages CRUD operations, checks user ownership before updates or deletes.
-Develop controllers. AuthController: POST /api/auth/register takes UserDTO, calls service to save user. POST /api/auth/login takes credentials, returns JWT if valid. NoteController: GET /api/notes lists user's notes. POST /api/notes creates new note. PUT /api/notes/{id} updates note. DELETE /api/notes/{id} removes note. Secure note endpoints with @PreAuthorize.
-Add security configuration. Extend WebSecurityConfigurerAdapter. Set up JWT authentication filter. Configure CORS if needed. Disable CSRF for API. Use BCryptPasswordEncoder bean.
-Handle exceptions globally. Create @ControllerAdvice class. Catch specific errors like AuthenticationException, return JSON with status and message.
-Test your backend. Write unit tests for services using JUnit and Mockito. Integration tests for controllers with MockMvc. Use Postman to verify endpoints.
->>>>>>> main
 Deploy to a cloud provider. Package as JAR. Host on Heroku or AWS EC2. Connect to managed PostgreSQL instance. Monitor logs for issues.
