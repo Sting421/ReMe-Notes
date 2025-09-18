@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@/hooks/useAuth';
 import { notesAPI } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Edit, Trash2, LogOut, Search } from 'lucide-react';
@@ -20,23 +20,63 @@ const Dashboard: React.FC = () => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
   useEffect(() => {
     fetchNotes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 300);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (debouncedSearchQuery) {
+      searchNotes(debouncedSearchQuery);
+    } else {
+      fetchNotes();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearchQuery]);
 
   const fetchNotes = async () => {
     try {
+      setIsLoading(true);
       const response = await notesAPI.getNotes();
       setNotes(response.data);
-    } catch (error: any) {
+    } catch (error: Error | unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       toast({
         variant: 'destructive',
         title: 'Failed to load notes',
-        description: error.response?.data?.message || 'Please try again.',
+        description: errorMessage || 'Please try again.',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const searchNotes = async (query: string) => {
+    try {
+      setIsLoading(true);
+      const response = await notesAPI.searchNotes(query);
+      setNotes(response.data);
+    } catch (error: Error | unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      toast({
+        variant: 'destructive',
+        title: 'Failed to search notes',
+        description: errorMessage || 'Please try again.',
       });
     } finally {
       setIsLoading(false);
@@ -55,11 +95,12 @@ const Dashboard: React.FC = () => {
         title: 'Note deleted',
         description: 'Your note has been deleted successfully.',
       });
-    } catch (error: any) {
+    } catch (error: Error | unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       toast({
         variant: 'destructive',
         title: 'Failed to delete note',
-        description: error.response?.data?.message || 'Please try again.',
+        description: errorMessage || 'Please try again.',
       });
     }
   };

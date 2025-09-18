@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import AuthLayout from '@/components/AuthLayout';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 
 const Register: React.FC = () => {
@@ -29,11 +29,12 @@ const Register: React.FC = () => {
         description: 'Welcome to Notes App.',
       });
       navigate('/dashboard');
-    } catch (error: any) {
+    } catch (error: Error | unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       toast({
         variant: 'destructive',
         title: 'Registration failed',
-        description: error.response?.data?.message || 'Please try again.',
+        description: errorMessage || 'Please try again.',
       });
     } finally {
       setIsLoading(false);

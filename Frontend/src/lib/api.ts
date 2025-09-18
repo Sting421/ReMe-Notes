@@ -1,125 +1,206 @@
-// Mock API for demo purposes - no real backend needed
+import axios from 'axios';
 
-interface Note {
-  id: string;
+const API_URL = 'http://localhost:8081/api';
+
+// Create axios instance with base URL
+const api = axios.create({
+  baseURL: API_URL,
+  headers: {
+    'Content-Type': 'application/json'
+  }
+});
+
+// Add request interceptor to add auth token to requests
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      config.headers['Authorization'] = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Authentication API
+export const authAPI = {
+  login: async (username: string, password: string) => {
+    try {
+      const response = await api.post('/auth/login', { username, password });
+      return response.data;
+    } catch (error) {
+      console.error('Login API error:', error);
+      if (axios.isAxiosError(error)) {
+        if (error.response) {
+          // Server responded with an error status code
+          const message = error.response.data?.message || 'Invalid username or password';
+          throw new Error(message);
+        } else if (error.request) {
+          // Request was made but no response received
+          throw new Error('No response from server. Please check your connection and try again.');
+        }
+      }
+      // Something else caused the error
+      throw new Error('Login failed. Please try again later.');
+    }
+  },
+  
+  register: async (username: string, email: string, password: string) => {
+    try {
+      const response = await api.post('/auth/register', { username, email, password });
+      return response.data;
+    } catch (error) {
+      console.error('Register API error:', error);
+      if (axios.isAxiosError(error)) {
+        if (error.response) {
+          // Server responded with an error status code
+          const message = error.response.data?.message || 'Registration failed';
+          throw new Error(message);
+        } else if (error.request) {
+          // Request was made but no response received
+          throw new Error('No response from server. Please check your connection and try again.');
+        }
+      }
+      // Something else caused the error
+      throw new Error('Registration failed. Please try again later.');
+    }
+  },
+  
+  // Method to check if the token is valid
+  validateToken: async () => {
+    try {
+      const response = await api.get('/auth/validate');
+      return response.data;
+    } catch (error) {
+      console.error('Token validation error:', error);
+      return { valid: false };
+    }
+  },
+  
+  // Method to refresh the token
+  refreshToken: async () => {
+    try {
+      const response = await api.post('/auth/refresh');
+      return response.data;
+    } catch (error) {
+      console.error('Token refresh error:', error);
+      throw new Error('Session expired. Please login again.');
+    }
+  }
+};
+
+// Note interface for TypeScript type safety
+export interface Note {
+  id: number | string; // Support both number (from backend) and string (for routing)
   title: string;
   content: string;
   createdAt: string;
   updatedAt: string;
 }
 
-// Demo notes data
-const DEMO_NOTES_KEY = 'demo-notes';
-
-const getDemoNotes = (): Note[] => {
-  const stored = localStorage.getItem(DEMO_NOTES_KEY);
-  if (stored) {
-    return JSON.parse(stored);
-  }
-  
-  // Default demo notes
-  const defaultNotes: Note[] = [
-    {
-      id: '1',
-      title: 'Welcome to Your Notes App',
-      content: 'This is a demo note-taking app. You can create, edit, and delete notes. All data is stored locally in your browser.',
-      createdAt: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
-      updatedAt: new Date(Date.now() - 86400000).toISOString(),
-    },
-    {
-      id: '2',
-      title: 'Getting Started',
-      content: 'Click the "New Note" button to create your first note. You can search through your notes using the search bar above.',
-      createdAt: new Date(Date.now() - 3600000).toISOString(), // 1 hour ago
-      updatedAt: new Date(Date.now() - 3600000).toISOString(),
-    },
-    {
-      id: '3',
-      title: 'Features',
-      content: 'This app includes:\n\n• Create and edit notes\n• Search functionality\n• Responsive design\n• Dark theme inspired by Blitzit\n• Local storage for persistence',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }
-  ];
-  
-  localStorage.setItem(DEMO_NOTES_KEY, JSON.stringify(defaultNotes));
-  return defaultNotes;
-};
-
-const saveDemoNotes = (notes: Note[]) => {
-  localStorage.setItem(DEMO_NOTES_KEY, JSON.stringify(notes));
-};
-
+// Real API for notes
 export const notesAPI = {
-  getNotes: (): Promise<{ data: Note[] }> => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve({ data: getDemoNotes() });
-      }, 300); // Simulate network delay
-    });
-  },
-  
-  createNote: (note: { title: string; content: string }): Promise<{ data: Note }> => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const notes = getDemoNotes();
-        const newNote: Note = {
-          id: Date.now().toString(),
-          title: note.title,
-          content: note.content,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        notes.unshift(newNote);
-        saveDemoNotes(notes);
-        resolve({ data: newNote });
-      }, 300);
-    });
-  },
-  
-  updateNote: (id: string, note: { title: string; content: string }): Promise<{ data: Note }> => {
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        const notes = getDemoNotes();
-        const index = notes.findIndex(n => n.id === id);
-        if (index !== -1) {
-          notes[index] = {
-            ...notes[index],
-            title: note.title,
-            content: note.content,
-            updatedAt: new Date().toISOString(),
-          };
-          saveDemoNotes(notes);
-          resolve({ data: notes[index] });
-        } else {
-          reject(new Error('Note not found'));
+  getNotes: async (): Promise<{ data: Note[] }> => {
+    try {
+      const response = await api.get('/notes');
+      return { data: response.data };
+    } catch (error) {
+      console.error('Error fetching notes:', error);
+      if (axios.isAxiosError(error)) {
+        if (error.response) {
+          throw new Error(error.response.data?.message || 'Failed to fetch notes');
+        } else if (error.request) {
+          throw new Error('No response from server. Please check your connection.');
         }
-      }, 300);
-    });
+      }
+      throw new Error('Failed to fetch notes. Please try again.');
+    }
   },
   
-  deleteNote: (id: string): Promise<{ data: { success: boolean } }> => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const notes = getDemoNotes();
-        const filteredNotes = notes.filter(n => n.id !== id);
-        saveDemoNotes(filteredNotes);
-        resolve({ data: { success: true } });
-      }, 300);
-    });
-  },
-  
-  getNote: (id: string): Promise<{ data: Note }> => {
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        const notes = getDemoNotes();
-        const note = notes.find(n => n.id === id);
-        if (note) {
-          resolve({ data: note });
-        } else {
-          reject(new Error('Note not found'));
+  createNote: async (note: { title: string; content: string }): Promise<{ data: Note }> => {
+    try {
+      const response = await api.post('/notes', note);
+      return { data: response.data };
+    } catch (error) {
+      console.error('Error creating note:', error);
+      if (axios.isAxiosError(error)) {
+        if (error.response) {
+          throw new Error(error.response.data?.message || 'Failed to create note');
+        } else if (error.request) {
+          throw new Error('No response from server. Please check your connection.');
         }
-      }, 300);
-    });
+      }
+      throw new Error('Failed to create note. Please try again.');
+    }
+  },
+  
+  updateNote: async (id: string, note: { title: string; content: string }): Promise<{ data: Note }> => {
+    try {
+      const response = await api.put(`/notes/${id}`, note);
+      return { data: response.data };
+    } catch (error) {
+      console.error('Error updating note:', error);
+      if (axios.isAxiosError(error)) {
+        if (error.response) {
+          throw new Error(error.response.data?.message || 'Failed to update note');
+        } else if (error.request) {
+          throw new Error('No response from server. Please check your connection.');
+        }
+      }
+      throw new Error('Failed to update note. Please try again.');
+    }
+  },
+  
+  deleteNote: async (id: string): Promise<{ data: { success: boolean } }> => {
+    try {
+      await api.delete(`/notes/${id}`);
+      return { data: { success: true } };
+    } catch (error) {
+      console.error('Error deleting note:', error);
+      if (axios.isAxiosError(error)) {
+        if (error.response) {
+          throw new Error(error.response.data?.message || 'Failed to delete note');
+        } else if (error.request) {
+          throw new Error('No response from server. Please check your connection.');
+        }
+      }
+      throw new Error('Failed to delete note. Please try again.');
+    }
+  },
+  
+  getNote: async (id: string): Promise<{ data: Note }> => {
+    try {
+      const response = await api.get(`/notes/${id}`);
+      return { data: response.data };
+    } catch (error) {
+      console.error('Error fetching note:', error);
+      if (axios.isAxiosError(error)) {
+        if (error.response) {
+          throw new Error(error.response.data?.message || 'Failed to fetch note');
+        } else if (error.request) {
+          throw new Error('No response from server. Please check your connection.');
+        }
+      }
+      throw new Error('Failed to fetch note. Please try again.');
+    }
+  },
+  
+  searchNotes: async (title: string): Promise<{ data: Note[] }> => {
+    try {
+      const response = await api.get(`/notes/search?title=${encodeURIComponent(title)}`);
+      return { data: response.data };
+    } catch (error) {
+      console.error('Error searching notes:', error);
+      if (axios.isAxiosError(error)) {
+        if (error.response) {
+          throw new Error(error.response.data?.message || 'Failed to search notes');
+        } else if (error.request) {
+          throw new Error('No response from server. Please check your connection.');
+        }
+      }
+      throw new Error('Failed to search notes. Please try again.');
+    }
   }
 };

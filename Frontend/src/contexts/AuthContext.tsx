@@ -1,29 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-
-interface User {
-  id: string;
-  username: string;
-  email: string;
-}
-
-interface AuthContextType {
-  user: User | null;
-  isLoading: boolean;
-  isAuthenticated: boolean;
-  login: (username: string, password: string) => Promise<void>;
-  register: (username: string, email: string, password: string) => Promise<void>;
-  logout: () => void;
-}
-
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};
+import React, { useState, useEffect } from 'react';
+import { authAPI } from '@/lib/api';
+import { AuthContext, User, AuthContextType } from './AuthTypes';
 
 interface AuthProviderProps {
   children: React.ReactNode;
@@ -36,63 +13,74 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     // Check for existing token on app load
     const token = localStorage.getItem('token');
+    const tokenType = localStorage.getItem('tokenType');
     const userData = localStorage.getItem('user');
     
-    if (token && userData) {
+    if (token && tokenType && userData) {
       try {
         setUser(JSON.parse(userData));
+        console.log('User session restored from localStorage');
       } catch (error) {
+        console.error('Error parsing user data from localStorage:', error);
         localStorage.removeItem('token');
+        localStorage.removeItem('tokenType');
         localStorage.removeItem('user');
       }
+    } else {
+      console.log('No valid session found in localStorage');
     }
     setIsLoading(false);
   }, []);
 
   const login = async (username: string, password: string) => {
     try {
-      // Demo authentication - accept demo/password123
-      if (username === 'demo' && password === 'password123') {
-        const userData = {
-          id: 'demo-user-1',
-          username: 'demo',
-          email: 'demo@example.com'
-        };
-        
-        const token = 'demo-jwt-token';
-        localStorage.setItem('token', token);
-        localStorage.setItem('user', JSON.stringify(userData));
-        setUser(userData);
-      } else {
-        throw new Error('Invalid credentials');
-      }
-    } catch (error) {
-      throw error;
+      const response = await authAPI.login(username, password);
+      
+      // The response should contain token, username, and email
+      const token = response.token;
+      const tokenType = response.type; // Should be 'Bearer'
+      
+      const userData = {
+        id: username, // We don't have ID in the response, using username as ID
+        username: response.username,
+        email: response.email
+      };
+      
+      // Store the auth token and user data in localStorage
+      localStorage.setItem('token', token);
+      localStorage.setItem('tokenType', tokenType);
+      localStorage.setItem('user', JSON.stringify(userData));
+      
+      // Update the user state
+      setUser(userData);
+      
+      console.log('Login successful');
+    } catch (apiError) {
+      console.error('Login API error:', apiError);
+      throw apiError;
     }
   };
 
   const register = async (username: string, email: string, password: string) => {
     try {
-      // Demo registration - accept any valid input
-      const userData = {
-        id: `user-${Date.now()}`,
-        username,
-        email
-      };
+      console.log('Attempting to register user');
+      await authAPI.register(username, email, password);
+      console.log('Registration successful, proceeding to login');
       
-      const token = `demo-jwt-token-${Date.now()}`;
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(userData));
-      setUser(userData);
-    } catch (error) {
-      throw error;
+      // After registration, log the user in
+      await login(username, password);
+    } catch (apiError) {
+      console.error('Registration API error:', apiError);
+      throw apiError;
     }
   };
 
   const logout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('tokenType');
     localStorage.removeItem('user');
     setUser(null);
+    console.log('User logged out');
   };
 
   const value: AuthContextType = {

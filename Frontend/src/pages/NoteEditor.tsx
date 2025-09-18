@@ -7,13 +7,8 @@ import { notesAPI } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 import { ArrowLeft, Save, Trash2 } from 'lucide-react';
 
-interface Note {
-  id: string;
-  title: string;
-  content: string;
-  createdAt: string;
-  updatedAt: string;
-}
+// Import the Note interface from api.ts
+import { Note } from '@/lib/api';
 
 const NoteEditor: React.FC = () => {
   const [note, setNote] = useState<Note | null>(null);
@@ -32,6 +27,7 @@ const NoteEditor: React.FC = () => {
     if (!isNewNote && id) {
       fetchNote(id);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, isNewNote]);
 
   useEffect(() => {
@@ -46,26 +42,19 @@ const NoteEditor: React.FC = () => {
   const fetchNote = async (noteId: string) => {
     setIsLoading(true);
     try {
-      const response = await notesAPI.getNotes();
-      const foundNote = response.data.find((n: Note) => n.id === noteId);
+      // Use the getNote API endpoint to fetch a specific note by ID
+      const response = await notesAPI.getNote(noteId);
+      const foundNote = response.data;
       
-      if (foundNote) {
-        setNote(foundNote);
-        setTitle(foundNote.title);
-        setContent(foundNote.content);
-      } else {
-        toast({
-          variant: 'destructive',
-          title: 'Note not found',
-          description: 'The note you are looking for does not exist.',
-        });
-        navigate('/dashboard');
-      }
-    } catch (error: any) {
+      setNote(foundNote);
+      setTitle(foundNote.title);
+      setContent(foundNote.content);
+    } catch (error: Error | unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       toast({
         variant: 'destructive',
-        title: 'Failed to load note',
-        description: error.response?.data?.message || 'Please try again.',
+        title: 'Note not found',
+        description: 'The note you are looking for does not exist.',
       });
       navigate('/dashboard');
     } finally {
@@ -101,7 +90,7 @@ const NoteEditor: React.FC = () => {
         // Navigate to the new note's edit page
         navigate(`/note/${newNote.id}`, { replace: true });
       } else {
-        const response = await notesAPI.updateNote(id!, noteData);
+        const response = await notesAPI.updateNote(String(id!), noteData);
         const updatedNote = response.data;
         setNote(updatedNote);
         toast({
@@ -110,11 +99,12 @@ const NoteEditor: React.FC = () => {
         });
       }
       setHasChanges(false);
-    } catch (error: any) {
+    } catch (error: Error | unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       toast({
         variant: 'destructive',
         title: 'Failed to save note',
-        description: error.response?.data?.message || 'Please try again.',
+        description: errorMessage || 'Please try again.',
       });
     } finally {
       setIsSaving(false);
@@ -129,17 +119,18 @@ const NoteEditor: React.FC = () => {
     }
 
     try {
-      await notesAPI.deleteNote(note.id);
+      await notesAPI.deleteNote(String(note.id)); // Convert to string to ensure compatibility
       toast({
         title: 'Note deleted',
         description: 'Your note has been deleted successfully.',
       });
       navigate('/dashboard');
-    } catch (error: any) {
+    } catch (error: Error | unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       toast({
         variant: 'destructive',
         title: 'Failed to delete note',
-        description: error.response?.data?.message || 'Please try again.',
+        description: errorMessage || 'Please try again.',
       });
     }
   };

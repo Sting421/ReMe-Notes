@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import AuthLayout from '@/components/AuthLayout';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 
 const Login: React.FC = () => {
@@ -28,11 +28,12 @@ const Login: React.FC = () => {
         description: 'Successfully signed in to your account.',
       });
       navigate('/dashboard');
-    } catch (error: any) {
+    } catch (error: Error | unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       toast({
         variant: 'destructive',
         title: 'Sign in failed',
-        description: error.response?.data?.message || 'Please check your credentials.',
+        description: errorMessage || 'Please check your credentials.',
       });
     } finally {
       setIsLoading(false);
@@ -102,13 +103,6 @@ const Login: React.FC = () => {
         </Button>
 
         <div className="space-y-4">
-          <div className="p-4 bg-secondary rounded-lg border border-border">
-            <h3 className="font-medium text-secondary-foreground mb-2">Demo Credentials</h3>
-            <div className="text-sm text-muted-foreground space-y-1">
-              <p><strong>Username:</strong> demo</p>
-              <p><strong>Password:</strong> password123</p>
-            </div>
-          </div>
           
           <div className="text-center">
             <p className="text-sm text-muted-foreground">
