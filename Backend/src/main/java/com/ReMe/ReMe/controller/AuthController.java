@@ -8,6 +8,7 @@ import com.ReMe.ReMe.service.UserService;
 import com.ReMe.ReMe.util.JwtUtil;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -15,9 +16,11 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/auth")
-@CrossOrigin(origins = "http://localhost:3000")
+@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:5137"})
 public class AuthController {
     
     @Autowired
@@ -59,6 +62,51 @@ public class AuthController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("Invalid username or password");
+        }
+    }
+    
+    @GetMapping("/validate")
+    public ResponseEntity<?> validateToken(@RequestHeader("Authorization") String authHeader) {
+        try {
+            if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                String token = authHeader.substring(7);
+                if (jwtUtil.validateToken(token)) {
+                    String username = jwtUtil.extractUsername(token);
+                    User user = userService.findByUsername(username);
+                    return ResponseEntity.ok(Map.of(
+                        "valid", true,
+                        "username", user.getUsername(),
+                        "email", user.getEmail()
+                    ));
+                }
+            }
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("valid", false));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("valid", false));
+        }
+    }
+    
+    @PostMapping("/refresh")
+    public ResponseEntity<?> refreshToken(@RequestHeader("Authorization") String authHeader) {
+        try {
+            if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                String token = authHeader.substring(7);
+                if (jwtUtil.validateToken(token)) {
+                    String username = jwtUtil.extractUsername(token);
+                    UserDetails userDetails = userService.loadUserByUsername(username);
+                    
+                    // Generate a new token
+                    String newToken = jwtUtil.generateToken(userDetails);
+                    
+                    User user = userService.findByUsername(username);
+                    JwtResponseDto response = new JwtResponseDto(newToken, user.getUsername(), user.getEmail());
+                    
+                    return ResponseEntity.ok(response);
+                }
+            }
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid or expired token");
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Token refresh failed");
         }
     }
 }
