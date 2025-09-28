@@ -151,7 +151,9 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Contributors
 
-- Your Name
+- Ben David Cadayona
+- Jiv Tuban
+- Aldrin John Vitorillo
 
 ---
 
