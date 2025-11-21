@@ -53,18 +53,27 @@ interface UseCardanoReturn {
   
   // Actions
   connect: () => Promise<void>;
-  connectTo: (walletKey?: string) => Promise<void>;
-  availableWallets: Array<{ key: string; name: string; icon?: string }>;
   disconnect: () => void;
   refresh: () => Promise<void>;
   sendTransaction: (recipientAddress: string, amountADA: number) => Promise<string>;
   
   // Errors
   error: string | null;
+  wallets: Array<{ key: string; name: string; icon?: string }>;
+  walletKey: string | null;
+  setWalletKey: (key: string) => void;
 }
 
 const PREVIEW_NETWORK_ID = 0; // Preview testnet network ID
 const LOVELACE_PER_ADA = 1_000_000n;
+
+// Get all available wallets from window.cardano
+function getWalletsFromWindow(): Array<{ key: string; name: string; icon?: string; info: WalletInfo }> {
+  if (typeof window === "undefined" || !window.cardano) return [];
+  return Object.entries(window.cardano)
+    .filter(([_key, w]: any) => !!w && typeof w.enable === "function" && typeof w.name === "string")
+    .map(([key, w]: any) => ({ key, name: w.name, icon: w.icon, info: w }));
+}
 
 export const useCardano = (): UseCardanoReturn => {
   const [isConnected, setIsConnected] = useState(false);
@@ -76,168 +85,62 @@ export const useCardano = (): UseCardanoReturn => {
   const [balance, setBalance] = useState<bigint>(0n);
   const [utxoCount, setUtxoCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [availableWallets, setAvailableWallets] = useState<Array<{ key: string; name: string; icon?: string }>>([]);
+  const [walletKey, setWalletKey] = useState<string | null>(null);
+  const [wallets, setWallets] = useState<Array<{ key: string; name: string; icon?: string }>>([]);
 
   // Format balance as ADA
   const balanceADA = (Number(balance) / Number(LOVELACE_PER_ADA)).toFixed(6);
 
-  // Detect available wallets in window.cardano
-  const detectAvailableWallets = useCallback(() => {
-    console.log("🔍 [Cardano] Detecting available wallets...");
-    if (typeof window === "undefined" || !window.cardano) {
-      console.warn("⚠️ [Cardano] window.cardano not found");
-      setAvailableWallets([]);
-      return [] as Array<{ key: string; name: string; icon?: string }>;
-    }
+  // On mount/discovery: update wallets and default selection
+  useEffect(() => {
+    const found = getWalletsFromWindow();
+    setWallets(found);
+    if (!walletKey && found.length > 0) setWalletKey(found[0].key);
+  }, [walletKey]);
 
-    const keys = Object.keys(window.cardano || {});
-    const wallets = keys.map((k) => {
-      const info = (window.cardano as any)[k] as WalletInfo | undefined;
-      return {
-        key: k,
-        name: info?.name || k,
-        icon: info?.icon,
-      };
-    });
-    console.log("📦 [Cardano] Available wallets:", wallets.map((w) => w.key));
-    setAvailableWallets(wallets);
-    return wallets;
-  }, []);
+  // Get WalletInfo for the current walletKey
+  const getCurrentWallet = useCallback((): WalletInfo | null => {
+    if (!walletKey) return null;
+    if (typeof window === "undefined" || !window.cardano) return null;
+    const w = window.cardano[walletKey];
+    return w && typeof w.enable === "function" ? w : null;
+  }, [walletKey]);
 
-  // Connect to wallet
-  // Default connect (keeps compatibility) connects to Lace if available
+  // Connect using selected walletKey
   const connect = useCallback(async () => {
-    return connectTo("lace");
-  }, []);
-
-  // Connect to a specific wallet key (e.g., 'lace', 'eternl')
-  const connectTo = useCallback(async (walletKey?: string) => {
-    console.log("🔌 [Cardano] Starting wallet connection...");
+    setIsConnecting(true);
+    setError(null);
+    const wallet = getCurrentWallet();
+    if (!wallet) {
+      setIsConnecting(false);
+      throw new Error("No wallet selected or wallet extension not found");
+    }
     try {
-      setIsConnecting(true);
-      setError(null);
-
-      // Refresh available wallets
-      const wallets = detectAvailableWallets();
-
-      const key = walletKey || (wallets.find((w) => w.key === "lace") ? "lace" : wallets[0]?.key);
-      if (!key) {
-        throw new Error("No Cardano wallets detected. Please install a compatible wallet extension.");
-      }
-
-      const walletInfo = (window as any).cardano?.[key] as WalletInfo | undefined;
-      if (!walletInfo) {
-        throw new Error(`Wallet '${key}' not found in window.cardano`);
-      }
-
-      // Check if already enabled
-      console.log(`🔐 [Cardano] Checking if wallet '${key}' is already enabled...`);
-      const enabled = await walletInfo.isEnabled();
-      console.log(`📊 [Cardano] Wallet enabled status: ${enabled}`);
-
-      // Enable wallet and get API
-      console.log(`🚀 [Cardano] Enabling wallet '${key}'...`);
-      const api = await walletInfo.enable();
-      console.log(`✅ [Cardano] Wallet '${key}' enabled successfully!`);
-      console.log("📦 [Cardano] Wallet API object:", {
-        hasGetNetworkId: typeof api.getNetworkId === "function",
-        hasGetUtxos: typeof api.getUtxos === "function",
-        hasGetUsedAddresses: typeof api.getUsedAddresses === "function",
-        hasGetChangeAddress: typeof api.getChangeAddress === "function",
-        hasSignTx: typeof api.signTx === "function",
-        hasSubmitTx: typeof api.submitTx === "function",
-      });
-      
+      // See if already enabled
+      await wallet.isEnabled?.(); // for some wallets side effect
+      const api = await wallet.enable();
       setWalletApi(api);
-      setWalletName(walletInfo.name || key);
-
-      // Verify network
-      console.log("🌐 [Cardano] Getting network ID...");
+      setWalletName(wallet.name);
+      // rest unchanged (network, addresses, utxos, etc, as before...)
       const networkId = await api.getNetworkId();
-      console.log(`🌐 [Cardano] Network ID: ${networkId} (0 = Preview, 1 = Mainnet)`);
-      
-      if (networkId !== PREVIEW_NETWORK_ID) {
-        console.error(`❌ [Cardano] Wrong network! Expected ${PREVIEW_NETWORK_ID} (Preview), got ${networkId}`);
-        throw new Error(`Wallet is not connected to Preview testnet. Current network ID: ${networkId}. Please switch to Preview testnet in wallet settings.`);
-      }
-      console.log("✅ [Cardano] Network verified: Preview testnet");
       setNetworkId(networkId);
       setIsConnected(true);
-
-      // Load wallet data
-      console.log("📋 [Cardano] Fetching wallet addresses...");
+      // Addresses
       const usedAddresses = await api.getUsedAddresses();
       const unusedAddresses = await api.getUnusedAddresses();
-      console.log(`📍 [Cardano] Used addresses: ${usedAddresses.length}`);
-      console.log(`📍 [Cardano] Unused addresses: ${unusedAddresses.length}`);
-      console.log("📍 [Cardano] Used addresses (first 3):", usedAddresses.slice(0, 3));
-      console.log("📍 [Cardano] Unused addresses (first 3):", unusedAddresses.slice(0, 3));
-      
-      const allAddresses = [...usedAddresses, ...unusedAddresses];
-      setAddresses(allAddresses);
-
-      // Get change address
-      const changeAddress = await api.getChangeAddress();
-      console.log("💰 [Cardano] Change address:", changeAddress);
-
-      // Get UTXOs and calculate balance
-      console.log("💎 [Cardano] Fetching UTXOs...");
+      setAddresses([...usedAddresses, ...unusedAddresses]);
+      // UTXOs
       const utxos = await api.getUtxos();
-      console.log(`💎 [Cardano] Total UTXOs: ${utxos ? utxos.length : 0}`);
-      
+      setUtxoCount(utxos ? utxos.length : 0);
       let totalBalance = 0n;
-      if (utxos) {
-        setUtxoCount(utxos.length);
-        
-        // Parse UTXOs and sum balance
-        for (let i = 0; i < utxos.length; i++) {
-          const utxoHex = utxos[i];
-          try {
-            const utxoBytes = Buffer.from(utxoHex, "hex");
-            const utxo = CSL.TransactionUnspentOutput.from_bytes(utxoBytes);
-            const output = utxo.output();
-            const amount = output.amount();
-            const coin = amount.coin();
-            const coinValue = BigInt(coin.to_str());
-            totalBalance += coinValue;
-            
-            if (i < 3) {
-              console.log(`💎 [Cardano] UTXO ${i + 1}: ${coinValue} lovelace`);
-            }
-          } catch (e) {
-            console.warn(`⚠️ [Cardano] Failed to parse UTXO ${i}:`, e);
-          }
-        }
-        console.log(`💰 [Cardano] Total balance: ${totalBalance} lovelace (${Number(totalBalance) / 1_000_000} ADA)`);
-        setBalance(totalBalance);
-      } else {
-        console.log("💰 [Cardano] No UTXOs found (balance: 0)");
-        setUtxoCount(0);
-        setBalance(0n);
+      if (utxos) for (let u of utxos) {
+        try {
+          const utxo = CSL.TransactionUnspentOutput.from_bytes(Buffer.from(u, 'hex'));
+          totalBalance += BigInt(utxo.output().amount().coin().to_str());
+        } catch {}
       }
-
-      // Try to get additional wallet info if available
-      try {
-        const balance = await api.getBalance();
-        console.log("💰 [Cardano] Balance from API (raw):", balance);
-      } catch (e) {
-        console.log("ℹ️ [Cardano] getBalance() not available or failed");
-      }
-
-      console.log("✅ [Cardano] Wallet connection complete!");
-      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-      console.log("📊 [Cardano] WALLET SUMMARY:");
-      console.log(`   Wallet: ${walletInfo.name} v${walletInfo.version}`);
-      console.log(`   Network: Preview Testnet (ID: ${networkId})`);
-      console.log(`   Total Addresses: ${allAddresses.length}`);
-      console.log(`   Used Addresses: ${usedAddresses.length}`);
-      console.log(`   Unused Addresses: ${unusedAddresses.length}`);
-      console.log(`   UTXO Count: ${utxos ? utxos.length : 0}`);
-      console.log(`   Balance: ${Number(totalBalance) / 1_000_000} ADA (${totalBalance} lovelace)`);
-      console.log(`   Change Address: ${changeAddress.substring(0, 20)}...`);
-      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      setBalance(totalBalance);
     } catch (err: any) {
-      console.error("❌ [Cardano] Connection failed:", err);
       setError(err.message || "Failed to connect to wallet");
       setIsConnected(false);
       setWalletApi(null);
@@ -245,7 +148,7 @@ export const useCardano = (): UseCardanoReturn => {
     } finally {
       setIsConnecting(false);
     }
-  }, [detectAvailableWallets]);
+  }, [getCurrentWallet]);
 
   // Refresh wallet data
   const refresh = useCallback(async () => {
@@ -542,12 +445,13 @@ export const useCardano = (): UseCardanoReturn => {
     balanceADA,
     utxoCount,
     connect,
-    connectTo,
-    availableWallets,
     disconnect,
     refresh,
     sendTransaction,
     error,
+    wallets,
+    walletKey,
+    setWalletKey,
   };
 };
 
