@@ -7,6 +7,7 @@ import { notesAPI } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Edit, Trash2, LogOut, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { WalletDialog } from '@/components/CardanoWallet';
 
 interface Note {
   id: string;
@@ -168,6 +169,7 @@ const Dashboard: React.FC = () => {
                 <Plus className="w-4 h-4 mr-2" />
                 New Note
               </Button>
+              <WalletDialog />
               <Button
                 variant="ghost"
                 size="sm"
