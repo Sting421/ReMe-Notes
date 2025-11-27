@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import * as CSL from "@emurgo/cardano-serialization-lib-browser";
 
 // CIP-30 Wallet API types
@@ -67,6 +67,101 @@ interface UseCardanoReturn {
 const PREVIEW_NETWORK_ID = 0; // Preview testnet network ID
 const LOVELACE_PER_ADA = 1_000_000n;
 
+// Helper function to fetch protocol parameters from Blockfrost (Preview testnet)
+async function fetchProtocolParameters(): Promise<{
+  minFeeA: string;
+  minFeeB: string;
+  coinsPerUtxoWord: string;
+  poolDeposit: string;
+  keyDeposit: string;
+  maxValueSize: number;
+  maxTxSize: number;
+}> {
+  const blockfrostProjectId = import.meta.env.VITE_BLOCKFROST_PROJECT_ID;
+  const network = import.meta.env.VITE_CARDANO_NETWORK || "preview";
+  
+  if (!blockfrostProjectId) {
+    // Fallback to Preview testnet defaults if Blockfrost not configured
+    console.warn("⚠️ [Cardano] Blockfrost not configured, using Preview testnet defaults");
+    return {
+      minFeeA: "44",
+      minFeeB: "155381",
+      coinsPerUtxoWord: "34482",
+      poolDeposit: "500000000",
+      keyDeposit: "2000000",
+      maxValueSize: 5000,
+      maxTxSize: 16384,
+    };
+  }
+
+  try {
+    const blockfrostUrl = `https://cardano-${network}.blockfrost.io/api/v0`;
+    const response = await fetch(`${blockfrostUrl}/epochs/latest/parameters`, {
+      headers: {
+        "project_id": blockfrostProjectId,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Blockfrost API error: ${response.status}`);
+    }
+
+    const params = await response.json();
+    return {
+      minFeeA: params.min_fee_a?.toString() || "44",
+      minFeeB: params.min_fee_b?.toString() || "155381",
+      coinsPerUtxoWord: params.coins_per_utxo_word?.toString() || "34482",
+      poolDeposit: params.pool_deposit?.toString() || "500000000",
+      keyDeposit: params.key_deposit?.toString() || "2000000",
+      maxValueSize: params.max_val_size || 5000,
+      maxTxSize: params.max_tx_size || 16384,
+    };
+  } catch (error) {
+    console.warn("⚠️ [Cardano] Failed to fetch protocol parameters, using defaults:", error);
+    // Return Preview testnet defaults on error
+    return {
+      minFeeA: "44",
+      minFeeB: "155381",
+      coinsPerUtxoWord: "34482",
+      poolDeposit: "500000000",
+      keyDeposit: "2000000",
+      maxValueSize: 5000,
+      maxTxSize: 16384,
+    };
+  }
+}
+
+// Helper function to fetch current slot from Blockfrost (Preview testnet)
+async function fetchCurrentSlot(): Promise<number> {
+  const blockfrostProjectId = import.meta.env.VITE_BLOCKFROST_PROJECT_ID;
+  const network = import.meta.env.VITE_CARDANO_NETWORK || "preview";
+  
+  if (!blockfrostProjectId) {
+    // Fallback: return a large slot number to avoid expiration
+    console.warn("⚠️ [Cardano] Blockfrost not configured, using placeholder slot");
+    return 100000000; // Large placeholder
+  }
+
+  try {
+    const blockfrostUrl = `https://cardano-${network}.blockfrost.io/api/v0`;
+    const response = await fetch(`${blockfrostUrl}/blocks/latest`, {
+      headers: {
+        "project_id": blockfrostProjectId,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Blockfrost API error: ${response.status}`);
+    }
+
+    const block = await response.json();
+    return block.slot || 100000000;
+  } catch (error) {
+    console.warn("⚠️ [Cardano] Failed to fetch current slot, using placeholder:", error);
+    return 100000000; // Large placeholder to avoid expiration
+  }
+}
+
 // Get all available wallets from window.cardano
 function getWalletsFromWindow(): Array<{ key: string; name: string; icon?: string; info: WalletInfo }> {
   if (typeof window === "undefined" || !window.cardano) return [];
@@ -87,6 +182,9 @@ export const useCardano = (): UseCardanoReturn => {
   const [error, setError] = useState<string | null>(null);
   const [walletKey, setWalletKey] = useState<string | null>(null);
   const [wallets, setWallets] = useState<Array<{ key: string; name: string; icon?: string }>>([]);
+  
+  // Global transaction mutex: only ONE transaction can run at a time
+  const transactionMutexRef = useRef<boolean>(false);
 
   // Format balance as ADA
   const balanceADA = (Number(balance) / Number(LOVELACE_PER_ADA)).toFixed(6);
@@ -124,6 +222,12 @@ export const useCardano = (): UseCardanoReturn => {
       // rest unchanged (network, addresses, utxos, etc, as before...)
       const networkId = await api.getNetworkId();
       setNetworkId(networkId);
+
+      // Enforce Preview testnet network
+      if (networkId !== PREVIEW_NETWORK_ID) {
+        throw new Error(`Wrong network selected in wallet. Expected Preview testnet (id ${PREVIEW_NETWORK_ID}), got network id ${networkId}.`);
+      }
+
       setIsConnected(true);
       // Addresses
       const usedAddresses = await api.getUsedAddresses();
@@ -217,29 +321,43 @@ export const useCardano = (): UseCardanoReturn => {
 
   // Send transaction
   const sendTransaction = useCallback(async (recipientAddress: string, amountADA: number): Promise<string> => {
+    // Global transaction mutex: prevent concurrent transactions
+    if (transactionMutexRef.current) {
+      console.warn("⚠️ [Cardano] Transaction already in progress, ignoring duplicate request");
+      throw new Error("A transaction is already in progress. Please wait for it to complete.");
+    }
+
+    // Acquire mutex
+    transactionMutexRef.current = true;
     console.log("📤 [Cardano] Starting transaction...");
     console.log(`📤 [Cardano] Recipient: ${recipientAddress.substring(0, 20)}...`);
     console.log(`📤 [Cardano] Amount: ${amountADA} ADA`);
     
-    if (!walletApi) {
-      console.error("❌ [Cardano] Wallet not connected");
-      throw new Error("Wallet not connected");
-    }
-
-    if (amountADA <= 0) {
-      console.error("❌ [Cardano] Invalid amount");
-      throw new Error("Amount must be greater than 0");
-    }
-
-    const amountLovelace = BigInt(Math.floor(amountADA * Number(LOVELACE_PER_ADA)));
-    console.log(`💰 [Cardano] Amount in lovelace: ${amountLovelace}`);
-    
-    if (amountLovelace > balance) {
-      console.error(`❌ [Cardano] Insufficient balance. Have: ${balance}, Need: ${amountLovelace}`);
-      throw new Error("Insufficient balance");
-    }
-
     try {
+      if (!walletApi) {
+        console.error("❌ [Cardano] Wallet not connected");
+        throw new Error("Wallet not connected");
+      }
+
+      // Enforce Preview network for sending as well
+      if (networkId !== PREVIEW_NETWORK_ID) {
+        console.error(`❌ [Cardano] Wrong network. Expected Preview testnet (id ${PREVIEW_NETWORK_ID}), got ${networkId}`);
+        throw new Error("Wallet is connected to the wrong network. Please switch your wallet to Preview testnet.");
+      }
+
+      if (amountADA <= 0) {
+        console.error("❌ [Cardano] Invalid amount");
+        throw new Error("Amount must be greater than 0");
+      }
+
+      const amountLovelace = BigInt(Math.floor(amountADA * Number(LOVELACE_PER_ADA)));
+      console.log(`💰 [Cardano] Amount in lovelace: ${amountLovelace}`);
+      
+      if (amountLovelace > balance) {
+        console.error(`❌ [Cardano] Insufficient balance. Have: ${balance}, Need: ${amountLovelace}`);
+        throw new Error("Insufficient balance");
+      }
+
       setError(null);
       console.log("🔨 [Cardano] Building transaction...");
 
@@ -274,22 +392,25 @@ export const useCardano = (): UseCardanoReturn => {
         throw new Error(`Invalid recipient address format: ${e instanceof Error ? e.message : "Unknown error"}`);
       }
 
-      // Build transaction using CSL TransactionBuilder
-      // TODO: production - fetch actual protocol parameters from Blockfrost
-      // These are placeholder values for Preview testnet (UNSAFE FOR PRODUCTION)
+      // Fetch protocol parameters from Blockfrost (Preview testnet)
+      console.log("📋 [Cardano] Fetching protocol parameters from Blockfrost...");
+      const protocolParams = await fetchProtocolParameters();
+      console.log("📋 [Cardano] Protocol parameters:", protocolParams);
+
+      // Build transaction using CSL TransactionBuilder with actual protocol parameters
       const linearFee = CSL.LinearFee.new(
-        CSL.BigNum.from_str("44"), // min_fee_a
-        CSL.BigNum.from_str("155381") // min_fee_b
+        CSL.BigNum.from_str(protocolParams.minFeeA),
+        CSL.BigNum.from_str(protocolParams.minFeeB)
       );
       
-      // Create TransactionBuilderConfig
+      // Create TransactionBuilderConfig with Preview testnet parameters
       const txBuilderConfig = CSL.TransactionBuilderConfigBuilder.new()
         .fee_algo(linearFee)
-        .coins_per_utxo_word(CSL.BigNum.from_str("34482")) // min_utxo calculation
-        .pool_deposit(CSL.BigNum.from_str("500000000"))
-        .key_deposit(CSL.BigNum.from_str("2000000"))
-        .max_value_size(5000)
-        .max_tx_size(16384)
+        .coins_per_utxo_word(CSL.BigNum.from_str(protocolParams.coinsPerUtxoWord))
+        .pool_deposit(CSL.BigNum.from_str(protocolParams.poolDeposit))
+        .key_deposit(CSL.BigNum.from_str(protocolParams.keyDeposit))
+        .max_value_size(protocolParams.maxValueSize)
+        .max_tx_size(protocolParams.maxTxSize)
         .build();
       
       const txBuilder = CSL.TransactionBuilder.new(txBuilderConfig);
@@ -336,53 +457,247 @@ export const useCardano = (): UseCardanoReturn => {
         throw new Error("Insufficient UTXOs to cover amount and fees");
       }
 
+      // Fetch current slot from Blockfrost and set TTL (Time to Live) BEFORE building outputs
+      // TTL must be set before adding outputs for proper fee calculation
+      console.log("⏰ [Cardano] Fetching current slot from Blockfrost...");
+      const currentSlot = await fetchCurrentSlot();
+      // Add 2 hour buffer (7200 slots ≈ 2 hours on Preview testnet)
+      const ttl = currentSlot + 7200;
+      console.log(`⏰ [Cardano] Current slot: ${currentSlot}, TTL: ${ttl}`);
+      txBuilder.set_ttl(ttl);
+
       // Add output to recipient
       const recipientAmount = CSL.Value.new(CSL.BigNum.from_str(amountLovelace.toString()));
       txBuilder.add_output(
         CSL.TransactionOutput.new(recipientAddr, recipientAmount)
       );
 
-      // Calculate change (totalInput - amount - estimated fee)
-      // TODO: production - calculate actual fee using txBuilder.min_fee() after building
-      const estimatedFee = 200000n; // Conservative placeholder
-      const changeAmount = totalInput - amountLovelace - estimatedFee;
-
-      // Add change output if change is above minimum UTXO (1 ADA)
-      const minUtxo = 1000000n;
-      if (changeAmount >= minUtxo) {
-        const changeAddr = CSL.Address.from_bytes(Buffer.from(changeAddress, "hex"));
-        const changeValue = CSL.Value.new(CSL.BigNum.from_str(changeAmount.toString()));
-        txBuilder.add_output(
-          CSL.TransactionOutput.new(changeAddr, changeValue)
-        );
+      // Parse and validate change address
+      let changeAddr: CSL.Address;
+      try {
+        changeAddr = CSL.Address.from_bytes(Buffer.from(changeAddress, "hex"));
+        // Verify change address is on the same network as recipient
+        const changeNetworkId = changeAddr.network_id();
+        const recipientNetworkId = recipientAddr.network_id();
+        if (changeNetworkId !== recipientNetworkId) {
+          console.warn(`⚠️ [Cardano] Network mismatch: change=${changeNetworkId}, recipient=${recipientNetworkId}`);
+        }
+      } catch (e) {
+        throw new Error(`Invalid change address format: ${e instanceof Error ? e.message : "Unknown error"}`);
       }
 
-      // Set TTL (Time to Live) - TODO: production - fetch current slot from Blockfrost
-      // For now using a placeholder (UNSAFE - transaction may expire)
-      const currentSlot = 0; // Should fetch from: GET /api/v0/blocks/latest
-      const ttl = currentSlot + 3600; // 1 hour buffer
-      txBuilder.set_ttl(ttl);
+      // Let the TransactionBuilder calculate fee and change output automatically
+      // This must be called AFTER all inputs and outputs are added
+      txBuilder.add_change_if_needed(changeAddr);
 
-      // Build transaction body
-      const txBody = txBuilder.build();
+      // Build transaction body (this calculates the actual fee)
+      let txBody: CSL.TransactionBody;
+      try {
+        txBody = txBuilder.build();
+      } catch (e) {
+        throw new Error(`Failed to build transaction: ${e instanceof Error ? e.message : "Unknown error"}`);
+      }
+      
+      // Log transaction details for debugging
+      const fee = BigInt(txBody.fee().to_str());
+      const inputCount = txBody.inputs().len();
+      const outputCount = txBody.outputs().len();
+      
+      console.log(`💰 [Cardano] Transaction fee: ${fee} lovelace (${Number(fee) / 1_000_000} ADA)`);
+      console.log(`📊 [Cardano] Transaction inputs: ${inputCount}, Total input: ${totalInput} lovelace`);
+      console.log(`📊 [Cardano] Transaction outputs: ${outputCount}`);
+      
+      // Validate transaction has sufficient funds
+      const totalOutput = Array.from({ length: outputCount }, (_, i) => {
+        const output = txBody.outputs().get(i);
+        return BigInt(output.amount().coin().to_str());
+      }).reduce((sum, val) => sum + val, 0n);
+      
+      console.log(`📊 [Cardano] Total output: ${totalOutput} lovelace (${Number(totalOutput) / 1_000_000} ADA)`);
+      
+      if (totalInput < totalOutput + fee) {
+        throw new Error(`Insufficient funds: Input ${totalInput} < Output ${totalOutput} + Fee ${fee}`);
+      }
+      
+      // Validate transaction structure
+      if (inputCount === 0) {
+        throw new Error("Transaction has no inputs");
+      }
+      if (outputCount === 0) {
+        throw new Error("Transaction has no outputs");
+      }
+      
+      // Verify TTL is set
+      const txTtl = txBody.ttl();
+      if (!txTtl || txTtl === 0) {
+        throw new Error("Transaction TTL is not set or invalid");
+      }
+      console.log(`⏰ [Cardano] Transaction TTL: ${txTtl}`);
 
-      // Serialize transaction body to CBOR hex
-      const txBodyBytes = txBody.to_bytes();
-      const txBodyHex = Buffer.from(txBodyBytes).toString("hex");
+      // Wrap transaction body into a Transaction (body + empty witness set)
+      const tx = CSL.Transaction.new(
+        txBody,
+        CSL.TransactionWitnessSet.new(),
+        undefined
+      );
 
-      // Sign transaction via wallet
-      console.log("✍️ [Cardano] Signing transaction via wallet...");
-      const signedTxHex = await walletApi.signTx(txBodyHex, true);
-      console.log(`✍️ [Cardano] Transaction signed. Signed TX length: ${signedTxHex.length} bytes`);
+      // Serialize full unsigned transaction to CBOR hex for CIP-30 signTx
+      const txBytes = tx.to_bytes();
+      const txHex = Buffer.from(txBytes).toString("hex");
+      console.log(`📦 [Cardano] Transaction CBOR size: ${txHex.length / 2} bytes`);
+      
+      // Validate transaction hex format
+      if (!txHex || txHex.length === 0) {
+        throw new Error("Transaction serialization failed: empty CBOR");
+      }
+      if (!/^[0-9a-fA-F]+$/.test(txHex)) {
+        throw new Error("Transaction serialization failed: invalid hex format");
+      }
+      
+      // Validate transaction can be deserialized (ensures valid CBOR)
+      try {
+        const testDeserialize = CSL.Transaction.from_bytes(Buffer.from(txHex, "hex"));
+        const testBody = testDeserialize.body();
+        const testInputs = testBody.inputs();
+        const testOutputs = testBody.outputs();
+        console.log(`✅ [Cardano] Transaction CBOR validation passed: ${testInputs.len()} inputs, ${testOutputs.len()} outputs`);
+      } catch (deserializeErr) {
+        console.error("❌ [Cardano] Transaction CBOR validation failed:", deserializeErr);
+        throw new Error(`Invalid transaction CBOR: cannot deserialize. ${deserializeErr instanceof Error ? deserializeErr.message : "Unknown error"}`);
+      }
+      
+      // Log transaction summary for user
+      console.log("📋 [Cardano] Transaction Summary:");
+      console.log(`   - Sending: ${amountADA} ADA (${amountLovelace} lovelace)`);
+      console.log(`   - Fee: ${Number(fee) / 1_000_000} ADA (${fee} lovelace)`);
+      console.log(`   - Change: ${Number(totalInput - amountLovelace - fee) / 1_000_000} ADA`);
+      console.log(`   - Recipient: ${recipientAddress.substring(0, 20)}...`);
+
+      // Verify wallet API is still valid before signing
+      if (!walletApi || typeof walletApi.signTx !== "function") {
+        throw new Error("Wallet API is not available. Please reconnect your wallet.");
+      }
+      
+      // For Lace wallet, verify it's still enabled (some wallets require re-enabling)
+      // Note: We check the wallet object, not the API, as the API might be stale
+      let activeWalletApi = walletApi;
+      const wallet = getCurrentWallet();
+      if (wallet && typeof wallet.isEnabled === "function") {
+        try {
+          const isEnabled = await wallet.isEnabled();
+          if (isEnabled === false) {
+            console.warn("⚠️ [Cardano] Wallet not enabled, attempting to re-enable...");
+            const reEnabledApi = await wallet.enable();
+            setWalletApi(reEnabledApi);
+            activeWalletApi = reEnabledApi;
+            console.log("✅ [Cardano] Wallet re-enabled successfully");
+          }
+        } catch (enableCheckErr) {
+          console.warn("⚠️ [Cardano] Could not check wallet enabled status:", enableCheckErr);
+          // Continue anyway - some wallets don't support isEnabled or might throw
+        }
+      }
+
+      // Validate transaction hex one more time before sending to wallet
+      if (!txHex || txHex.length < 100) {
+        throw new Error(`Invalid transaction hex: too short (${txHex.length} chars)`);
+      }
+      console.log(`📦 [Cardano] Transaction hex length: ${txHex.length} characters`);
+      console.log(`📦 [Cardano] Transaction hex (first 200 chars): ${txHex.substring(0, 200)}...`);
+
+      // Sign transaction via wallet (request full signed tx, not just witness set)
+      console.log("✍️ [Cardano] Requesting transaction signature from wallet...");
+      console.log("⚠️ [Cardano] Please approve the transaction in your wallet popup");
+      console.log(`📦 [Cardano] Wallet API signTx method available: ${typeof activeWalletApi.signTx === "function"}`);
+      
+      let witnessSetHex: string;
+      try {
+        // Use the active wallet API (either original or re-enabled)
+        // signTx returns ONLY the witness set, not the full signed transaction
+        witnessSetHex = await activeWalletApi.signTx(txHex, false);
+        console.log(`✍️ [Cardano] Transaction signed successfully. Witness set length: ${witnessSetHex.length} characters`);
+      } catch (signErr: any) {
+        // Enhanced error logging for debugging
+        console.error("❌ [Cardano] Transaction signing error details:", {
+          name: signErr?.name,
+          code: signErr?.code,
+          info: signErr?.info,
+          message: signErr?.message,
+          stack: signErr?.stack,
+          error: signErr,
+        });
+        
+        // Check if it's a user cancellation
+        const errorCode = signErr?.code;
+        const errorName = signErr?.name;
+        const errorInfo = signErr?.info;
+        const errorMessage = signErr?.message;
+        
+        if (
+          errorCode === 2 ||
+          errorName === "TxSignError" ||
+          (typeof errorInfo === "string" && 
+            (errorInfo.toLowerCase().includes("user declined") ||
+             errorInfo.toLowerCase().includes("declined signing"))) ||
+          (typeof errorMessage === "string" &&
+            errorMessage.toLowerCase().includes("user declined"))
+        ) {
+          // This is a user cancellation - re-throw as user cancelled
+          const cancelledError = new Error("Transaction cancelled by user");
+          (cancelledError as any).isUserCancelled = true;
+          throw cancelledError;
+        }
+        
+        // Re-throw other errors
+        throw signErr;
+      }
+
+      // Combine the original transaction body with the signed witness set
+      // to create the complete signed transaction
+      console.log("🔧 [Cardano] Combining transaction body with witness set...");
+      let signedTxHex: string;
+      try {
+        // Parse the witness set returned by the wallet
+        const witnessSet = CSL.TransactionWitnessSet.from_bytes(Buffer.from(witnessSetHex, "hex"));
+        
+        // Create the complete signed transaction by combining:
+        // 1. Original transaction body
+        // 2. Signed witness set from wallet
+        // 3. No auxiliary data (undefined)
+        const signedTx = CSL.Transaction.new(
+          txBody,
+          witnessSet,
+          undefined // no auxiliary data
+        );
+        
+        // Serialize the complete signed transaction to CBOR hex
+        signedTxHex = Buffer.from(signedTx.to_bytes()).toString("hex");
+        console.log(`🔧 [Cardano] Complete signed transaction CBOR length: ${signedTxHex.length} characters`);
+        
+        // Validate the signed transaction can be deserialized
+        const testSignedTx = CSL.Transaction.from_bytes(Buffer.from(signedTxHex, "hex"));
+        const witnessCount = testSignedTx.witness_set().vkeys()?.len() || 0;
+        console.log(`✅ [Cardano] Signed transaction validated: ${witnessCount} witness(es)`);
+      } catch (combineErr: any) {
+        console.error("❌ [Cardano] Failed to combine transaction with witness set:", combineErr);
+        throw new Error(`Failed to create signed transaction: ${combineErr.message || "Unknown error"}`);
+      }
 
       // Submit transaction
       console.log("📡 [Cardano] Submitting transaction...");
       let txHash: string;
-      if (walletApi.submitTx) {
+      if (activeWalletApi.submitTx) {
         // Use wallet's submitTx if available
         console.log("📡 [Cardano] Using wallet's submitTx method...");
-        txHash = await walletApi.submitTx(signedTxHex);
-        console.log(`✅ [Cardano] Transaction submitted via wallet. TX Hash: ${txHash}`);
+        try {
+          txHash = await activeWalletApi.submitTx(signedTxHex);
+          console.log(`✅ [Cardano] Transaction submitted successfully!`);
+          console.log(`🆔 [Cardano] TRANSACTION ID: ${txHash}`);
+          console.log(`🔍 [Cardano] View on CardanoScan: https://preview.cardanoscan.io/transaction/${txHash}`);
+        } catch (submitErr: any) {
+          console.error("❌ [Cardano] Transaction submission failed:", submitErr);
+          throw new Error(`Transaction submission failed: ${submitErr.info || submitErr.message || "Unknown error"}`);
+        }
       } else {
         console.log("📡 [Cardano] Wallet submitTx not available, using Blockfrost fallback...");
         // Fallback to Blockfrost submission
@@ -410,6 +725,9 @@ export const useCardano = (): UseCardanoReturn => {
 
         const result = await response.json();
         txHash = result.hash || signedTxHex.substring(0, 64); // Fallback if no hash in response
+        console.log(`✅ [Cardano] Transaction submitted via Blockfrost!`);
+        console.log(`🆔 [Cardano] TRANSACTION ID: ${txHash}`);
+        console.log(`🔍 [Cardano] View on CardanoScan: https://preview.cardanoscan.io/transaction/${txHash}`);
       }
 
       // Refresh balance after successful send
@@ -417,15 +735,60 @@ export const useCardano = (): UseCardanoReturn => {
       await refresh();
 
       console.log("✅ [Cardano] Transaction completed successfully!");
-      console.log(`📊 [Cardano] Transaction Hash: ${txHash}`);
+      console.log(`🎉 [Cardano] FINAL TRANSACTION ID: ${txHash}`);
       return txHash;
     } catch (err: any) {
-      const errorMsg = err.message || "Failed to send transaction";
-      console.error("❌ [Cardano] Transaction failed:", errorMsg);
-      setError(errorMsg);
-      throw err;
+      let message = "Failed to send transaction";
+      let isUserCancelled = false;
+
+      // Handle specific wallet error types
+      // Check for TxSignError with code 2 (user declined)
+      // Error format: TxSignError { code: 2, info: "user declined signing tx" }
+      const errorCode = err?.code;
+      const errorName = err?.name;
+      const errorInfo = err?.info;
+      const errorMessage = err?.message;
+
+      // Check if this is a user cancellation error (ONLY for signing, not submission)
+      // TxSignError with code 2 is specifically for signing cancellation
+      if (
+        (errorCode === 2 && errorName === "TxSignError") ||
+        (errorName === "TxSignError" && typeof errorInfo === "string" && 
+          (errorInfo.toLowerCase().includes("user declined") ||
+           errorInfo.toLowerCase().includes("declined signing"))) ||
+        (typeof errorMessage === "string" &&
+          errorMessage.toLowerCase().includes("user declined") &&
+          errorMessage.toLowerCase().includes("sign"))
+      ) {
+        isUserCancelled = true;
+        message = "Transaction cancelled by user";
+        console.log("ℹ️ [Cardano] Transaction cancelled by user (this is normal)");
+      } else if (errorName === "ApiError" || errorCode === -1) {
+        message = `Wallet API error: ${errorInfo || errorMessage || "Unknown error"}`;
+      } else if (err instanceof Error) {
+        message = err.message;
+      } else if (typeof err === "string") {
+        message = err;
+      } else if (errorInfo) {
+        message = `Transaction signing failed: ${errorInfo}`;
+      }
+
+      // Only log as error if it's not a user cancellation
+      if (!isUserCancelled) {
+        console.error("❌ [Cardano] Transaction failed:", err);
+        setError(message);
+      }
+
+      // Create a custom error that preserves the cancellation flag
+      const error = new Error(message);
+      (error as any).isUserCancelled = isUserCancelled;
+      throw error;
+    } finally {
+      // Always release mutex, even on error or user cancellation
+      transactionMutexRef.current = false;
+      console.log("🔓 [Cardano] Transaction mutex released");
     }
-  }, [walletApi, balance, refresh]);
+  }, [walletApi, networkId, balance, refresh, getCurrentWallet]);
 
   // Auto-refresh on connection
   useEffect(() => {
@@ -454,4 +817,3 @@ export const useCardano = (): UseCardanoReturn => {
     setWalletKey,
   };
 };
-

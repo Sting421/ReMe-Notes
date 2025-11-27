@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useCardano } from "@/hooks/useCardano";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,23 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Copy, Check, Send, RefreshCw, Wallet } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+// Basic Cardano recipient format validation (Preview testnet bech32 or long hex from CIP-30)
+const isValidRecipientFormat = (value: string): boolean => {
+  const trimmed = value.trim();
+
+  if (!trimmed) return false;
+
+  // CIP-30 style hex address from wallet API (with or without 0x)
+  const hex = trimmed.startsWith("0x") ? trimmed.slice(2) : trimmed;
+  const isHex = /^[0-9a-fA-F]+$/.test(hex);
+  if (isHex && hex.length > 50) return true;
+
+  // Bech32-style address (Preview testnet only)
+  if (trimmed.startsWith("addr_test1")) return true;
+
+  return false;
+};
 
 export const WalletPanel = () => {
   const {
@@ -27,6 +44,9 @@ export const WalletPanel = () => {
   const [isSending, setIsSending] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  
+  // Local mutex to prevent double-clicks and concurrent form submissions
+  const isSubmittingRef = useRef<boolean>(false);
 
   if (!isConnected) {
     return (
@@ -103,10 +123,15 @@ export const WalletPanel = () => {
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!recipientAddress.trim()) {
+    // Prevent double-clicks and concurrent submissions
+    if (isSubmittingRef.current || isSending) {
+      return;
+    }
+    
+    if (!recipientAddress.trim() || !isValidRecipientFormat(recipientAddress)) {
       toast({
         title: "Invalid address",
-        description: "Please enter a recipient address",
+        description: "Please enter a valid Cardano address (bech32 or hex from wallet API)",
         variant: "destructive",
       });
       return;
@@ -131,7 +156,10 @@ export const WalletPanel = () => {
       return;
     }
 
+    // Acquire local mutex
+    isSubmittingRef.current = true;
     setIsSending(true);
+    
     try {
       // Address format is handled in useCardano hook (supports both hex and bech32)
       const txHash = await sendTransaction(recipientAddress.trim(), amount);
@@ -144,15 +172,39 @@ export const WalletPanel = () => {
       setRecipientAddress("");
       setAmountADA("");
       
-      // Refresh balance
-      await refresh();
-    } catch (err: any) {
-      toast({
-        title: "Transaction failed",
-        description: err.message || "Failed to send transaction",
-        variant: "destructive",
+      // Refresh balance (don't await to avoid blocking UI)
+      refresh().catch(() => {
+        // Silently handle refresh errors
       });
+    } catch (err: any) {
+      const message = typeof err?.message === "string" ? err.message : String(err ?? "");
+      const lower = message.toLowerCase();
+      const isUserCancelled = err?.isUserCancelled || 
+        lower.includes("transaction cancelled by user") ||
+        lower.includes("signing was cancelled") ||
+        lower.includes("user declined signing tx") ||
+        lower.includes("user declined signing") ||
+        lower.includes("transaction already in progress");
+
+      // Treat user-declined signing as a normal cancellation, not a failure
+      if (isUserCancelled) {
+        // Only show toast if it's a user cancellation, not a mutex lock
+        if (!lower.includes("transaction already in progress")) {
+          toast({
+            title: "Transaction cancelled",
+            description: "Transaction cancelled by user",
+          });
+        }
+      } else {
+        toast({
+          title: "Transaction failed",
+          description: message || "Failed to send transaction",
+          variant: "destructive",
+        });
+      }
     } finally {
+      // Always release local mutex
+      isSubmittingRef.current = false;
       setIsSending(false);
     }
   };
