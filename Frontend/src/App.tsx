@@ -10,6 +10,8 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import NoteEditor from "./pages/NoteEditor";
+import TransactionHistory from "./pages/TransactionHistory";
+import NotesMarketplace from "./pages/NotesMarketplace";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -52,6 +54,22 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute>
             <NoteEditor />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/transactions" 
+        element={
+          <ProtectedRoute>
+            <TransactionHistory />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/marketplace" 
+        element={
+          <ProtectedRoute>
+            <NotesMarketplace />
           </ProtectedRoute>
         } 
       />

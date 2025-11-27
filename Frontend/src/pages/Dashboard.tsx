@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card';
 import { useAuth } from '@/hooks/useAuth';
 import { notesAPI } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Edit, Trash2, LogOut, Search } from 'lucide-react';
+import { Plus, Edit, Trash2, LogOut, Search, History, ShoppingBag } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { WalletDialog } from '@/components/CardanoWallet';
 
@@ -156,11 +156,29 @@ const Dashboard: React.FC = () => {
               </div>
               <div>
                 <h1 className="text-lg font-semibold text-foreground">Notes</h1>
-                <p className="text-xs text-muted-foreground">Welcome back, {user?.username}</p>
+                <p className="text-xs text-muted-foreground">Welcome back</p>
               </div>
             </div>
             
             <div className="flex items-center space-x-4">
+              <Button
+                onClick={() => navigate('/marketplace')}
+                size="sm"
+                variant="outline"
+                className="hidden sm:flex"
+              >
+                <ShoppingBag className="w-4 h-4 mr-2" />
+                Marketplace
+              </Button>
+              <Button
+                onClick={() => navigate('/transactions')}
+                size="sm"
+                variant="outline"
+                className="hidden sm:flex"
+              >
+                <History className="w-4 h-4 mr-2" />
+                Transactions
+              </Button>
               <Button
                 onClick={() => navigate('/note/new')}
                 size="sm"

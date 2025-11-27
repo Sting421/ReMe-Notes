@@ -6,6 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Copy, Check, Send, RefreshCw, Wallet } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { transactionsAPI } from "@/lib/api";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { notesAPI } from "@/lib/api";
+import { useEffect } from "react";
 
 // Basic Cardano recipient format validation (Preview testnet bech32 or long hex from CIP-30)
 const isValidRecipientFormat = (value: string): boolean => {
@@ -44,9 +48,34 @@ export const WalletPanel = () => {
   const [isSending, setIsSending] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [selectedNoteId, setSelectedNoteId] = useState<string>("");
+  const [notes, setNotes] = useState<Array<{ id: string; title: string }>>([]);
+  const [isLoadingNotes, setIsLoadingNotes] = useState(false);
   
   // Local mutex to prevent double-clicks and concurrent form submissions
   const isSubmittingRef = useRef<boolean>(false);
+
+  // Load user notes for linking transactions
+  useEffect(() => {
+    if (isConnected) {
+      loadNotes();
+    }
+  }, [isConnected]);
+
+  const loadNotes = async () => {
+    setIsLoadingNotes(true);
+    try {
+      const response = await notesAPI.getNotes();
+      setNotes(response.data.map(note => ({
+        id: String(note.id),
+        title: note.title || 'Untitled'
+      })));
+    } catch (err) {
+      console.error('Failed to load notes:', err);
+    } finally {
+      setIsLoadingNotes(false);
+    }
+  };
 
   if (!isConnected) {
     return (
@@ -161,16 +190,51 @@ export const WalletPanel = () => {
     setIsSending(true);
     
     try {
-      // Address format is handled in useCardano hook (supports both hex and bech32)
-      const txHash = await sendTransaction(recipientAddress.trim(), amount);
+      // Fetch note content if note is selected (to embed in blockchain)
+      let noteContent = '';
+      const hasNoteLink = selectedNoteId && selectedNoteId !== "none";
+      if (hasNoteLink) {
+        try {
+          const noteResponse = await notesAPI.getNote(selectedNoteId);
+          const note = noteResponse.data;
+          noteContent = `Note: ${note.title}\n\n${note.content || 'No content'}`;
+        } catch (noteErr) {
+          console.error('Failed to fetch note content:', noteErr);
+          // Continue without note content
+        }
+      }
+      
+      // Send transaction with note content as blockchain metadata (CIP-20)
+      const txHash = await sendTransaction(recipientAddress.trim(), amount, noteContent || undefined);
+      
+      // Record transaction in backend database
+      try {
+        const senderAddr = addresses.length > 0 ? addresses[0] : "";
+        await transactionsAPI.createTransaction({
+          txHash,
+          senderAddress: senderAddr,
+          recipientAddress: recipientAddress.trim(),
+          amountADA: amount,
+          noteId: hasNoteLink ? parseInt(selectedNoteId) : undefined,
+          networkId: 0, // Preview testnet
+          metadata: hasNoteLink ? `Linked to note ${selectedNoteId}` : undefined
+        });
+      } catch (recordErr) {
+        console.error('Failed to record transaction:', recordErr);
+        // Don't fail the whole operation if recording fails
+      }
+      
       toast({
         title: "Transaction sent!",
-        description: `Transaction hash: ${txHash.substring(0, 16)}...`,
+        description: hasNoteLink 
+          ? `Transaction with note content embedded on blockchain!` 
+          : `Transaction hash: ${txHash.substring(0, 16)}...`,
       });
       
       // Reset form
       setRecipientAddress("");
       setAmountADA("");
+      setSelectedNoteId("");
       
       // Refresh balance (don't await to avoid blocking UI)
       refresh().catch(() => {
@@ -318,6 +382,29 @@ export const WalletPanel = () => {
                 Available: {balanceADA} ADA
               </p>
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="note">Link to Note (Optional)</Label>
+              <Select
+                value={selectedNoteId}
+                onValueChange={setSelectedNoteId}
+                disabled={isSending || isLoadingNotes}
+              >
+                <SelectTrigger id="note">
+                  <SelectValue placeholder="Select a note to link..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {notes.map((note) => (
+                    <SelectItem key={note.id} value={note.id}>
+                      {note.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Optionally link this transaction to a note
+              </p>
+            </div>
             <Button
               type="submit"
               disabled={isSending || !recipientAddress.trim() || !amountADA}
@@ -341,4 +428,3 @@ export const WalletPanel = () => {
     </div>
   );
 };
-

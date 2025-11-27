@@ -36,14 +36,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       const response = await authAPI.login(username, password);
       
-      // The response should contain token, username, and email
+      // The response should contain token and userId
       const token = response.token;
       const tokenType = response.type; // Should be 'Bearer'
       
       const userData = {
-        id: username, // We don't have ID in the response, using username as ID
-        username: response.username,
-        email: response.email
+        id: response.userId
       };
       
       // Store the auth token and user data in localStorage
