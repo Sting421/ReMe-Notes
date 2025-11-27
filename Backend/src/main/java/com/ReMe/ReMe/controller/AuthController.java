@@ -1,12 +1,7 @@
 package com.ReMe.ReMe.controller;
 
-import com.ReMe.ReMe.dto.JwtResponseDto;
-import com.ReMe.ReMe.dto.UserLoginDto;
-import com.ReMe.ReMe.dto.UserRegistrationDto;
-import com.ReMe.ReMe.entity.User;
-import com.ReMe.ReMe.service.UserService;
-import com.ReMe.ReMe.util.JwtUtil;
-import jakarta.validation.Valid;
+import java.util.Map;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -14,9 +9,22 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Map;
+import com.ReMe.ReMe.dto.JwtResponseDto;
+import com.ReMe.ReMe.dto.UserLoginDto;
+import com.ReMe.ReMe.dto.UserRegistrationDto;
+import com.ReMe.ReMe.entity.User;
+import com.ReMe.ReMe.service.UserService;
+import com.ReMe.ReMe.util.JwtUtil;
+
+import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -57,7 +65,7 @@ public class AuthController {
             
             User user = userService.findByUsername(loginDto.getUsername());
             
-            JwtResponseDto response = new JwtResponseDto(jwt, user.getUsername(), user.getEmail());
+            JwtResponseDto response = new JwtResponseDto(jwt, user.getId());
             
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -75,8 +83,7 @@ public class AuthController {
                     User user = userService.findByUsername(username);
                     return ResponseEntity.ok(Map.of(
                         "valid", true,
-                        "username", user.getUsername(),
-                        "email", user.getEmail()
+                        "userId", user.getId()
                     ));
                 }
             }
@@ -99,7 +106,7 @@ public class AuthController {
                     String newToken = jwtUtil.generateToken(userDetails);
                     
                     User user = userService.findByUsername(username);
-                    JwtResponseDto response = new JwtResponseDto(newToken, user.getUsername(), user.getEmail());
+                    JwtResponseDto response = new JwtResponseDto(newToken, user.getId());
                     
                     return ResponseEntity.ok(response);
                 }

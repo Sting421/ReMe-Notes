@@ -55,7 +55,7 @@ interface UseCardanoReturn {
   connect: () => Promise<void>;
   disconnect: () => void;
   refresh: () => Promise<void>;
-  sendTransaction: (recipientAddress: string, amountADA: number) => Promise<string>;
+  sendTransaction: (recipientAddress: string, amountADA: number, metadata?: string) => Promise<string>;
   
   // Errors
   error: string | null;
@@ -320,7 +320,7 @@ export const useCardano = (): UseCardanoReturn => {
   }, []);
 
   // Send transaction
-  const sendTransaction = useCallback(async (recipientAddress: string, amountADA: number): Promise<string> => {
+  const sendTransaction = useCallback(async (recipientAddress: string, amountADA: number, metadata?: string): Promise<string> => {
     // Global transaction mutex: prevent concurrent transactions
     if (transactionMutexRef.current) {
       console.warn("⚠️ [Cardano] Transaction already in progress, ignoring duplicate request");
@@ -332,6 +332,9 @@ export const useCardano = (): UseCardanoReturn => {
     console.log("📤 [Cardano] Starting transaction...");
     console.log(`📤 [Cardano] Recipient: ${recipientAddress.substring(0, 20)}...`);
     console.log(`📤 [Cardano] Amount: ${amountADA} ADA`);
+    if (metadata) {
+      console.log(`📝 [Cardano] Metadata: ${metadata.substring(0, 100)}${metadata.length > 100 ? '...' : ''}`);
+    }
     
     try {
       if (!walletApi) {
@@ -486,8 +489,50 @@ export const useCardano = (): UseCardanoReturn => {
         throw new Error(`Invalid change address format: ${e instanceof Error ? e.message : "Unknown error"}`);
       }
 
+      // Add metadata if provided (CIP-20 for transaction messages)
+      if (metadata) {
+        console.log("📝 [Cardano] Adding metadata to transaction...");
+        try {
+          // Create auxiliary data with metadata
+          const auxData = CSL.AuxiliaryData.new();
+          const generalMetadata = CSL.GeneralTransactionMetadata.new();
+          
+          // Use label 674 (CIP-20 standard for transaction messages)
+          // This makes it viewable on CardanoScan and other blockchain explorers
+          const metadataLabel = CSL.BigNum.from_str("674");
+          
+          // Create metadata content as a map
+          const metadataMap = CSL.MetadataMap.new();
+          
+          // Add "msg" key with array of message chunks (max 64 bytes per chunk)
+          const msgKey = CSL.TransactionMetadatum.new_text("msg");
+          const msgArray = CSL.MetadataList.new();
+          
+          // Split metadata into 64-byte chunks (Cardano metadata limit)
+          const maxChunkSize = 64;
+          for (let i = 0; i < metadata.length; i += maxChunkSize) {
+            const chunk = metadata.substring(i, i + maxChunkSize);
+            msgArray.add(CSL.TransactionMetadatum.new_text(chunk));
+          }
+          
+          metadataMap.insert(msgKey, CSL.TransactionMetadatum.new_list(msgArray));
+          
+          // Add the metadata map to general metadata with label 674
+          generalMetadata.insert(metadataLabel, CSL.TransactionMetadatum.new_map(metadataMap));
+          auxData.set_metadata(generalMetadata);
+          
+          // Set auxiliary data to transaction builder
+          txBuilder.set_auxiliary_data(auxData);
+          
+          console.log(`📝 [Cardano] Metadata added: ${Math.ceil(metadata.length / maxChunkSize)} chunk(s), ${metadata.length} bytes total`);
+        } catch (metadataErr) {
+          console.error("❌ [Cardano] Failed to add metadata:", metadataErr);
+          throw new Error(`Failed to add metadata: ${metadataErr instanceof Error ? metadataErr.message : "Unknown error"}`);
+        }
+      }
+
       // Let the TransactionBuilder calculate fee and change output automatically
-      // This must be called AFTER all inputs and outputs are added
+      // This must be called AFTER all inputs, outputs, and metadata are added
       txBuilder.add_change_if_needed(changeAddr);
 
       // Build transaction body (this calculates the actual fee)
@@ -660,14 +705,17 @@ export const useCardano = (): UseCardanoReturn => {
         // Parse the witness set returned by the wallet
         const witnessSet = CSL.TransactionWitnessSet.from_bytes(Buffer.from(witnessSetHex, "hex"));
         
+        // Get auxiliary data from transaction builder (includes metadata if added)
+        const auxData = txBuilder.get_auxiliary_data();
+        
         // Create the complete signed transaction by combining:
         // 1. Original transaction body
         // 2. Signed witness set from wallet
-        // 3. No auxiliary data (undefined)
+        // 3. Auxiliary data (metadata) if present
         const signedTx = CSL.Transaction.new(
           txBody,
           witnessSet,
-          undefined // no auxiliary data
+          auxData // includes metadata if added
         );
         
         // Serialize the complete signed transaction to CBOR hex
@@ -683,11 +731,65 @@ export const useCardano = (): UseCardanoReturn => {
         throw new Error(`Failed to create signed transaction: ${combineErr.message || "Unknown error"}`);
       }
 
-      // Submit transaction
+      // Submit transaction with Blockfrost fallback
       console.log("📡 [Cardano] Submitting transaction...");
       let txHash: string;
-      if (activeWalletApi.submitTx) {
-        // Use wallet's submitTx if available
+      
+      // Always try Blockfrost first for more reliable submission
+      const blockfrostProjectId = import.meta.env.VITE_BLOCKFROST_PROJECT_ID;
+      if (blockfrostProjectId) {
+        console.log("📡 [Cardano] Using Blockfrost for transaction submission...");
+        try {
+          const network = import.meta.env.VITE_CARDANO_NETWORK || "preview";
+          const blockfrostUrl = `https://cardano-${network}.blockfrost.io/api/v0`;
+          
+          const response = await fetch(`${blockfrostUrl}/tx/submit`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/cbor",
+              "project_id": blockfrostProjectId,
+            },
+            body: Buffer.from(signedTxHex, "hex"),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Blockfrost submission failed: ${errorText}`);
+          }
+
+          const result = await response.json();
+          txHash = typeof result === 'string' ? result : result.hash || result.txHash;
+          
+          if (!txHash) {
+            // Extract tx hash from signed transaction if not in response
+            const hash = CSL.hash_transaction(CSL.TransactionBody.from_bytes(Buffer.from(signedTxHex, "hex")));
+            txHash = Buffer.from(hash.to_bytes()).toString("hex");
+          }
+          
+          console.log(`✅ [Cardano] Transaction submitted via Blockfrost!`);
+          console.log(`🆔 [Cardano] TRANSACTION ID: ${txHash}`);
+          console.log(`🔍 [Cardano] View on CardanoScan: https://preview.cardanoscan.io/transaction/${txHash}`);
+        } catch (blockfrostErr: any) {
+          console.error("❌ [Cardano] Blockfrost submission failed:", blockfrostErr);
+          
+          // Try wallet submitTx as fallback
+          if (activeWalletApi.submitTx) {
+            console.log("📡 [Cardano] Trying wallet submitTx as fallback...");
+            try {
+              txHash = await activeWalletApi.submitTx(signedTxHex);
+              console.log(`✅ [Cardano] Transaction submitted via wallet!`);
+              console.log(`🆔 [Cardano] TRANSACTION ID: ${txHash}`);
+              console.log(`🔍 [Cardano] View on CardanoScan: https://preview.cardanoscan.io/transaction/${txHash}`);
+            } catch (walletErr: any) {
+              console.error("❌ [Cardano] Wallet submission also failed:", walletErr);
+              throw new Error(`Transaction submission failed: ${blockfrostErr.message || "Unknown error"}`);
+            }
+          } else {
+            throw blockfrostErr;
+          }
+        }
+      } else if (activeWalletApi.submitTx) {
+        // No Blockfrost configured, try wallet
         console.log("📡 [Cardano] Using wallet's submitTx method...");
         try {
           txHash = await activeWalletApi.submitTx(signedTxHex);
@@ -699,35 +801,7 @@ export const useCardano = (): UseCardanoReturn => {
           throw new Error(`Transaction submission failed: ${submitErr.info || submitErr.message || "Unknown error"}`);
         }
       } else {
-        console.log("📡 [Cardano] Wallet submitTx not available, using Blockfrost fallback...");
-        // Fallback to Blockfrost submission
-        const blockfrostProjectId = import.meta.env.VITE_BLOCKFROST_PROJECT_ID;
-        if (!blockfrostProjectId) {
-          throw new Error("Blockfrost project ID not configured. Set VITE_BLOCKFROST_PROJECT_ID in .env");
-        }
-
-        const network = import.meta.env.VITE_CARDANO_NETWORK || "preview";
-        const blockfrostUrl = `https://cardano-${network}.blockfrost.io/api/v0`;
-        
-        const response = await fetch(`${blockfrostUrl}/tx/submit`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/cbor",
-            "project_id": blockfrostProjectId,
-          },
-          body: Buffer.from(signedTxHex, "hex"),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Blockfrost submission failed: ${errorText}`);
-        }
-
-        const result = await response.json();
-        txHash = result.hash || signedTxHex.substring(0, 64); // Fallback if no hash in response
-        console.log(`✅ [Cardano] Transaction submitted via Blockfrost!`);
-        console.log(`🆔 [Cardano] TRANSACTION ID: ${txHash}`);
-        console.log(`🔍 [Cardano] View on CardanoScan: https://preview.cardanoscan.io/transaction/${txHash}`);
+        throw new Error("No transaction submission method available. Configure Blockfrost or ensure wallet supports submitTx.");
       }
 
       // Refresh balance after successful send
