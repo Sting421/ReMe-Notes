@@ -1,0 +1,27 @@
+# Render deployment manifest for backend service
+# See https://render.com/docs/deploying-docker for details
+services:
+  - type: web
+    name: reme-backend
+    env: docker
+    dockerfilePath: Backend/Dockerfile
+    branch: main
+    plan: free
+    autoDeploy: true
+    # Build command is optional for Docker environments; included here for clarity
+    buildCommand: ./mvnw -B -DskipTests package
+    # Start command used by Render to run the service
+    startCommand: java $JAVA_OPTS -jar /app/app.jar
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        # Set to 'prod' or other profile as needed in Render environment settings
+        value: "prod"
+      - key: JAVA_OPTS
+        value: "-Xmx512m"
+      # Add other environment variables your app needs here, but prefer to set secrets
+      # via the Render dashboard (Environment > Secrets) and reference them in envVars.
+      # Example placeholders (do NOT store secrets here):
+      - key: DATABASE_URL
+        value: ""
+      - key: JWT_SECRET
+        value: ""

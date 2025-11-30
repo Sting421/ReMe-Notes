@@ -1,19 +1,19 @@
 package com.ReMe.ReMe.dto;
 
+import java.util.UUID;
+
 public class JwtResponseDto {
     
     private String token;
     private String type = "Bearer";
-    private String username;
-    private String email;
+    private UUID userId;
     
     // Constructors
     public JwtResponseDto() {}
     
-    public JwtResponseDto(String token, String username, String email) {
+    public JwtResponseDto(String token, UUID userId) {
         this.token = token;
-        this.username = username;
-        this.email = email;
+        this.userId = userId;
     }
     
     // Getters and Setters
@@ -33,19 +33,11 @@ public class JwtResponseDto {
         this.type = type;
     }
     
-    public String getUsername() {
-        return username;
+    public UUID getUserId() {
+        return userId;
     }
     
-    public void setUsername(String username) {
-        this.username = username;
-    }
-    
-    public String getEmail() {
-        return email;
-    }
-    
-    public void setEmail(String email) {
-        this.email = email;
+    public void setUserId(UUID userId) {
+        this.userId = userId;
     }
 }

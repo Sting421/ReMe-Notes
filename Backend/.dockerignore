@@ -1,0 +1,28 @@
+# Build outputs
+target/
+*.jar
+
+# Git and editor metadata
+.git
+.gitignore
+.idea/
+.vscode/
+*.iml
+
+# Logs and temporary files
+*.log
+tmp/
+*.tmp
+
+# Local environment files
+.env
+.env.local
+local.properties
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node / frontend artifacts (if build context includes frontend)
+node_modules/
+dist/
