@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = 'http://localhost:8081/api';
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api';
 
 // Create axios instance with base URL
 const api = axios.create({
@@ -121,6 +121,17 @@ export interface PurchaseNoteDto {
   transactionHash: string;
   buyerWalletAddress: string;
   purchasePriceAda: number;
+}
+
+export interface NotePurchaseHistory {
+  id: number;
+  marketplaceNoteId?: number;
+  noteTitle?: string;
+  purchasePriceAda: number;
+  transactionHash: string;
+  buyerWalletAddress: string;
+  sellerWalletAddress: string;
+  purchasedAt: string;
 }
 
 // Marketplace API
@@ -258,6 +269,40 @@ export const marketplaceAPI = {
         }
       }
       throw new Error('Failed to fetch my purchased notes. Please try again.');
+    }
+  },
+  
+  getMyPurchaseHistory: async (): Promise<{ data: NotePurchaseHistory[] }> => {
+    try {
+      const response = await api.get('/marketplace/purchases/history/my-buys');
+      return { data: response.data };
+    } catch (error) {
+      console.error('Error fetching purchase history:', error);
+      if (axios.isAxiosError(error)) {
+        if (error.response) {
+          throw new Error(error.response.data?.message || 'Failed to fetch purchase history');
+        } else if (error.request) {
+          throw new Error('No response from server. Please check your connection.');
+        }
+      }
+      throw new Error('Failed to fetch purchase history. Please try again.');
+    }
+  },
+  
+  getMySalesHistory: async (): Promise<{ data: NotePurchaseHistory[] }> => {
+    try {
+      const response = await api.get('/marketplace/purchases/history/my-sales');
+      return { data: response.data };
+    } catch (error) {
+      console.error('Error fetching sales history:', error);
+      if (axios.isAxiosError(error)) {
+        if (error.response) {
+          throw new Error(error.response.data?.message || 'Failed to fetch sales history');
+        } else if (error.request) {
+          throw new Error('No response from server. Please check your connection.');
+        }
+      }
+      throw new Error('Failed to fetch sales history. Please try again.');
     }
   },
   

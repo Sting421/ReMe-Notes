@@ -15,6 +15,7 @@ import com.ReMe.ReMe.entity.User;
 import com.ReMe.ReMe.repository.NoteRepository;
 import com.ReMe.ReMe.repository.TransactionRepository;
 import com.ReMe.ReMe.repository.UserRepository;
+import com.ReMe.ReMe.util.AddressMaskingUtil;
 
 @Service
 public class TransactionService {
@@ -61,7 +62,7 @@ public class TransactionService {
         }
         
         Transaction savedTransaction = transactionRepository.save(transaction);
-        return mapToResponseDto(savedTransaction);
+        return mapToResponseDto(savedTransaction, user);
     }
     
     @Transactional(readOnly = true)
@@ -71,7 +72,7 @@ public class TransactionService {
         
         List<Transaction> transactions = transactionRepository.findByUserOrderByCreatedAtDesc(user);
         return transactions.stream()
-            .map(this::mapToResponseDto)
+            .map(tx -> mapToResponseDto(tx, user))
             .collect(Collectors.toList());
     }
     
@@ -85,7 +86,10 @@ public class TransactionService {
             throw new RuntimeException("Transaction does not belong to user");
         }
         
-        return mapToResponseDto(transaction);
+        User user = userRepository.findByUsername(username)
+            .orElseThrow(() -> new RuntimeException("User not found"));
+        
+        return mapToResponseDto(transaction, user);
     }
     
     @Transactional(readOnly = true)
@@ -103,16 +107,33 @@ public class TransactionService {
         
         List<Transaction> transactions = transactionRepository.findByNoteId(noteId);
         return transactions.stream()
-            .map(this::mapToResponseDto)
+            .map(tx -> mapToResponseDto(tx, user))
             .collect(Collectors.toList());
     }
     
-    private TransactionResponseDto mapToResponseDto(Transaction transaction) {
+    private TransactionResponseDto mapToResponseDto(Transaction transaction, User currentUser) {
         TransactionResponseDto dto = new TransactionResponseDto();
         dto.setId(transaction.getId());
         dto.setTxHash(transaction.getTxHash());
-        dto.setSenderAddress(transaction.getSenderAddress());
-        dto.setRecipientAddress(transaction.getRecipientAddress());
+        
+        // Mask addresses - only show full address if it belongs to the current user
+        String senderAddress = transaction.getSenderAddress();
+        String recipientAddress = transaction.getRecipientAddress();
+        
+        // Get user's wallet address if available (from user entity or transaction context)
+        String userWalletAddress = null;
+        if (currentUser != null && transaction.getUser() != null && 
+            transaction.getUser().getId().equals(currentUser.getId())) {
+            // This is the user's transaction, so we can show their own address fully
+            // For now, mask both addresses for security - user can see full details on blockchain explorer
+            dto.setSenderAddress(AddressMaskingUtil.maskAddress(senderAddress));
+            dto.setRecipientAddress(AddressMaskingUtil.maskAddress(recipientAddress));
+        } else {
+            // Not user's transaction, mask both addresses
+            dto.setSenderAddress(AddressMaskingUtil.maskAddress(senderAddress));
+            dto.setRecipientAddress(AddressMaskingUtil.maskAddress(recipientAddress));
+        }
+        
         dto.setAmountADA(transaction.getAmountADA());
         dto.setNetworkId(transaction.getNetworkId());
         dto.setMetadata(transaction.getMetadata());
@@ -124,5 +145,10 @@ public class TransactionService {
         }
         
         return dto;
+    }
+    
+    // Overloaded method for backward compatibility
+    private TransactionResponseDto mapToResponseDto(Transaction transaction) {
+        return mapToResponseDto(transaction, null);
     }
 }

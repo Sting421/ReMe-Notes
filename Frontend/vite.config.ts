@@ -30,4 +30,8 @@ export default defineConfig(({ mode }) => ({
     format: "es",
     plugins: () => [wasm()],
   },
+  build: {
+    // Ensure modern JS features like top-level await are preserved for wasm usage
+    target: "esnext"
+  },
 }));

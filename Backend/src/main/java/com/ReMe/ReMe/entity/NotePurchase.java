@@ -29,10 +29,6 @@ public class NotePurchase {
     @JoinColumn(name = "marketplace_note_id", nullable = false)
     private MarketplaceNote marketplaceNote;
     
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "buyer_id", nullable = false)
-    private User buyer;
-    
     @Column(nullable = false)
     @NotNull(message = "Purchase price is required")
     private BigDecimal purchasePriceAda;
@@ -56,10 +52,9 @@ public class NotePurchase {
     // Constructors
     public NotePurchase() {}
     
-    public NotePurchase(MarketplaceNote marketplaceNote, User buyer, BigDecimal purchasePriceAda,
+    public NotePurchase(MarketplaceNote marketplaceNote, BigDecimal purchasePriceAda,
                        String transactionHash, String buyerWalletAddress, String sellerWalletAddress) {
         this.marketplaceNote = marketplaceNote;
-        this.buyer = buyer;
         this.purchasePriceAda = purchasePriceAda;
         this.transactionHash = transactionHash;
         this.buyerWalletAddress = buyerWalletAddress;
@@ -81,14 +76,6 @@ public class NotePurchase {
     
     public void setMarketplaceNote(MarketplaceNote marketplaceNote) {
         this.marketplaceNote = marketplaceNote;
-    }
-    
-    public User getBuyer() {
-        return buyer;
-    }
-    
-    public void setBuyer(User buyer) {
-        this.buyer = buyer;
     }
     
     public BigDecimal getPurchasePriceAda() {

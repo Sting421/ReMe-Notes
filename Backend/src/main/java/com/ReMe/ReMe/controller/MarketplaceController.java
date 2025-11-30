@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.ReMe.ReMe.dto.MarketplaceNoteDto;
 import com.ReMe.ReMe.dto.MarketplaceNoteResponseDto;
 import com.ReMe.ReMe.dto.NotePurchaseDto;
+import com.ReMe.ReMe.dto.NotePurchaseHistoryDto;
 import com.ReMe.ReMe.service.MarketplaceService;
 
 import jakarta.validation.Valid;
@@ -150,6 +151,52 @@ public class MarketplaceController {
                 principal.getName()
             );
             return ResponseEntity.ok(notes);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @GetMapping("/purchases/history/my-buys")
+    public ResponseEntity<?> getMyPurchaseHistory(Principal principal) {
+        try {
+            List<NotePurchaseHistoryDto> purchases = marketplaceService.getMyPurchaseHistory(
+                principal.getName()
+            );
+            return ResponseEntity.ok(purchases);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @GetMapping("/purchases/history/my-sales")
+    public ResponseEntity<?> getMySalesHistory(Principal principal) {
+        try {
+            List<NotePurchaseHistoryDto> sales = marketplaceService.getMySalesHistory(
+                principal.getName()
+            );
+            return ResponseEntity.ok(sales);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+    
+    /**
+     * Secure endpoint to get seller wallet address for purchase.
+     * Only returns the address if the note is active and available for purchase.
+     * This endpoint is rate-limited and should only be called when user is about to purchase.
+     */
+    @GetMapping("/notes/{id}/seller-address")
+    public ResponseEntity<?> getSellerAddressForPurchase(
+            @PathVariable Long id,
+            Principal principal) {
+        try {
+            String sellerAddress = marketplaceService.getSellerAddressForPurchase(
+                id, 
+                principal.getName()
+            );
+            return ResponseEntity.ok(new java.util.HashMap<String, String>() {{
+                put("sellerWalletAddress", sellerAddress);
+            }});
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }

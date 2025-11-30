@@ -8,18 +8,17 @@ import org.springframework.stereotype.Repository;
 
 import com.ReMe.ReMe.entity.MarketplaceNote;
 import com.ReMe.ReMe.entity.NotePurchase;
-import com.ReMe.ReMe.entity.User;
 
 @Repository
 public interface NotePurchaseRepository extends JpaRepository<NotePurchase, Long> {
     
-    Optional<NotePurchase> findByMarketplaceNoteAndBuyer(MarketplaceNote marketplaceNote, User buyer);
+    Optional<NotePurchase> findByMarketplaceNoteAndBuyerWalletAddress(MarketplaceNote marketplaceNote, String buyerWalletAddress);
     
-    List<NotePurchase> findByBuyerOrderByPurchasedAtDesc(User buyer);
+    List<NotePurchase> findByBuyerWalletAddressOrderByPurchasedAtDesc(String buyerWalletAddress);
     
-    List<NotePurchase> findByMarketplaceNote_SellerOrderByPurchasedAtDesc(User seller);
+    List<NotePurchase> findBySellerWalletAddressOrderByPurchasedAtDesc(String sellerWalletAddress);
     
-    boolean existsByMarketplaceNoteAndBuyer(MarketplaceNote marketplaceNote, User buyer);
+    boolean existsByMarketplaceNoteAndBuyerWalletAddress(MarketplaceNote marketplaceNote, String buyerWalletAddress);
     
     Optional<NotePurchase> findByTransactionHash(String transactionHash);
 }
